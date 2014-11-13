@@ -1,0 +1,8 @@
+#!/bin/bash
+
+modprobe nbd max_part=16
+qemu-nbd -c /dev/nbd0 /home/jmbto/vdisk.img
+partprobe /dev/nbd0
+mount /dev/nbd0p1 /mnt
+cd /mnt/
+

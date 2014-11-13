@@ -1,0 +1,41 @@
+From ff4ec6e0a99eb339a77b3f0b1138b3f8f0c7bc94 Mon Sep 17 00:00:00 2001
+From: Jambato <kagekyio@gmail.com>
+Date: Sat, 22 Feb 2014 13:28:43 +0100
+Subject: [PATCH] Fix salamander zombies swimming through lava (#8177)
+
+---
+ crawl-ref/source/mon-place.cc | 11 ++++++++++-
+ 1 file changed, 10 insertions(+), 1 deletion(-)
+
+diff --git a/crawl-ref/source/mon-place.cc b/crawl-ref/source/mon-place.cc
+index 8937c67..b2a075b 100644
+--- a/crawl-ref/source/mon-place.cc
++++ b/crawl-ref/source/mon-place.cc
+@@ -111,7 +111,12 @@ bool monster_habitable_grid(const monster* mon,
+                             dungeon_feature_type actual_grid)
+ {
+     // Zombified monsters enjoy the same habitat as their original.
+-    const monster_type mt = mons_base_type(mon);
++    //
++    // [jmbto] It is not coherent for salamander zombies to be lava amphibians.
++    const monster_type mt = (mons_base_type(mon) == MONS_SALAMANDER
++                             && mons_class_is_zombified(mon->type))
++                             ? mon->type
++                             : mons_base_type(mon);
+ 
+     return monster_habitable_grid(mt,
+                                   actual_grid,
+@@ -148,6 +153,10 @@ bool monster_habitable_grid(monster_type mt,
+     if (actual_grid == DNGN_TELEPORTER)
+         return false;
+ 
++    // The test ensures salamander zombies cannot live on lava.
++    if (feat_is_lava(actual_grid) && mons_class_is_zombified(mt))
++        return false;
++
+     const dungeon_feature_type feat_preferred =
+         habitat2grid(mons_class_primary_habitat(mt));
+     const dungeon_feature_type feat_nonpreferred =
+-- 
+1.8.4.rc3
+

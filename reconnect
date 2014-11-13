@@ -1,0 +1,6 @@
+#!/bin/bash
+
+/etc/init.d/networking force-reload
+ip link set eth0 down
+ip link set eth0 up
+/etc/init.d/networking force-reload
