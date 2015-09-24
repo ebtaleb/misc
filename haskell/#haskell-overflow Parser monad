@@ -1,0 +1,216 @@
+* Now talking on #haskell-overflow
+* Topic for #haskell-overflow is: Overflow conversations and technical discussion from #haskell
+* Topic for #haskell-overflow set by dons at Mon Jan 29 13:07:43 2007
+* augur has quit (Ping timeout: 240 seconds)
+* Lethalman (~lethal@ppp-3-31.28-151.libero.it) has joined #haskell-overflow
+* mizu_no_oto has quit (Quit: ["Textual IRC Client: www.textualapp.com"])
+* mizu_no_oto (~textual@gw1.mcgraw-hill.com) has joined #haskell-overflow
+* mizu_no_oto has quit (Read error: Operation timed out)
+* Lethalman has quit (Read error: Connection reset by peer)
+* mizu_no_oto (~textual@c-76-24-19-222.hsd1.ma.comcast.net) has joined #haskell-overflow
+* valyagolev has quit (Quit: My MacBook has gone to sleep. ZZZzzz…)
+* tel has quit (Quit: My MacBook has gone to sleep. ZZZzzz…)
+* augur (~augur@208.58.5.87) has joined #haskell-overflow
+* mizu_no_oto has quit (Quit: Computer has gone to sleep.)
+* mizu_no_oto (~textual@c-76-24-19-222.hsd1.ma.comcast.net) has joined #haskell-overflow
+* fredmorcos (~fredmorco@46.218.17.109.rev.sfr.net) has joined #haskell-overflow
+<Cale> ah, hello
+<fredmorcos> hello
+<Cale> okay, so here's a very simple approach. This implementation isn't going to be the most efficient thing in terms of space or time, but will hopefully be rather easy to follow.
+<fredmorcos> that's a good start
+<Cale> The Dr. Seuss version of it is "A parser for things is a function from strings to lists of pairs of strings and things"
+<Cale> i.e.
+<Cale> newtype Parser a = P (String -> [(String, a)])
+<fredmorcos> and this keeps the state of the parser after every consumption of the input
+<Cale> the idea here being that a parser is something which, if we give it a String, it will give us back a list of possible ways to parse it, nondeterministically
+<fredmorcos> ok
+<Cale> and each of those will consist of a depleted String (with some prefix removed), and a result (of type a)
+<Cale> Now writing the most basic function to run the parser is trivial:
+<Cale> runParser :: Parser a -> String -> [(String, a)]
+<Cale> runParser (P f) s = f s
+<Cale> or simply:
+<Cale> runParser (P f) = f
+<Cale> Or indeed, this is the same thing as a field extractor, so we could have written:
+<Cale> newtype Parser a = P { runParser :: String -> [(String, a)] }
+* jfischoff (~jfischoff@corp.imvu.com) has joined #haskell-overflow
+* shachaf (~shachaf@unaffiliated/shachaf) has joined #haskell-overflow
+<fredmorcos> good so far
+<Cale> As an initial example, we can build a parser which looks for a character at the start of the input which matches a given predicate, returning that character as its result (and removing it from the input) if successful, and failing to parse otherwise:
+<Cale> satisfy :: (Char -> Bool) -> Parser Char
+<Cale> satisfy p = ...
+<Cale> we don't have any good way to build parsers yet apart from the data constructor P, so might as well use it:
+<Cale> satisfy p = P ...
+<Cale> and P wants as its parameter a function of type  String -> [(String, a)]  so that might as well be a lambda:
+<Cale> satisfy p = P (\s -> ...)
+<Cale> now we have the input string s, and we want to pattern match that to look at the first character (if any!)
+<fredmorcos> rather \(s:ss) ?
+<Cale> satisfy p = P (\s -> case s of ...)
+<Cale> and we'll match against the nonempty list case:
+<Cale> satisfy p = P (\s -> case s of (x:xs) ...)
+<Cale> and we want to check if  p x  is true, which we'll do with a guard:
+* levi (~user@c-174-52-89-43.hsd1.ut.comcast.net) has joined #haskell-overflow
+<Cale> satisfy p = P (\s -> case s of (x:xs) | p x -> ...)
+<Cale> and in that case, our parse is successful...
+<Cale> satisfy p = P (\s -> case s of (x:xs) | p x -> [(...,...)] )
+<Cale> and the depleted string is xs
+<Cale> satisfy p = P (\s -> case s of (x:xs) | p x -> [(xs,...)] )
+<Cale> and the result is the character we found, which is x
+<Cale> satisfy p = P (\s -> case s of (x:xs) | p x -> [(xs,x)] )
+<Cale> and then in any other case, our parse fails
+<Cale> satisfy p = P (\s -> case s of (x:xs) | p x -> [(xs,x)]; _ -> [])
+<Cale> which we represent with an empty list of parses
+<Cale> (a fancier parser library might find some way to produce a good error message, but we're not going to worry about that)
+<Cale> So from this, we can get a lot of basic building block parsers for single characters of different types
+<Cale> letter = satisfy isAlpha
+<Cale> digit = satisfy isDigit
+<Cale> char c = satisfy (== c)
+<Cale> oneOf cs = satisfy (`elem` cs)
+<Cale> anyChar = satisfy (const True)
+<fredmorcos> all good so far, but isn't the error message part (ie, book-keeping of line and col values) supposed to be almost for free in such a parser?
+<Cale> Well, we'd need to keep track of more details
+<Cale> aside from the input string
+<Cale> This is going to get complicated enough in a moment
+<fredmorcos> ok
+<Cale> So I want to have as few details as possible
+<Cale> So, if we want to make this Parser type into a monad, we need implementations of return and (>>=). We'll do return first
+<Cale> In general, return has type:
+<Cale> return :: (Monad m) => a -> m a
+<Cale> so in our case, where m = Parser, we need to implement
+<Cale> return :: a -> Parser a
+<Cale> and what return v will be is the parser which doesn't eat any of its input, but succeeds, producing the value v as its result
+<Cale> return v = ...
+<Cale> This isn't of the form satisfy p for any condition p, because we're not going to eat any of our input, so might as well use the data constructor
+<Cale> return v = P ...
+<Cale> and again, P wants a function, so we might as well use a lambda
+<Cale> return v = P (\s -> ...)
+<Cale> and now we've already decided that we're going to unconditionally succeed
+<Cale> return v = P (\s -> [...])
+<Cale> with depleted string being the whole input, and result v
+<Cale> return v = P (\s -> [(s,v)])
+<fredmorcos> good so far
+<Cale> Okay, so the other part we'll want, which will be a key bit of glue for sticking parsers together into more complex ones, is
+<Cale> (>>=) :: Parser a -> (a -> Parser b) -> Parser b
+<Cale> Are you familiar with the list monad, or list comprehensions?
+<Cale> (I'm going to need one of the two)
+<fredmorcos> yes
+<fredmorcos> both
+<Cale> okay
+<Cale> So in English, x >>= f will be the parser which will first run the parser x on the input s, getting some depleted string s' and result v, and then run the parser f v on the depleted input s', getting further depleted string s'' and final result w which it will produce as its own depleted string and result
+<Cale> But of course, in each of those two steps, there will be a *list* of depleted string / result pairs, so we want to do this in all possible ways
+<Cale> (usually the lists will be 0 or 1 elements, but there will be cases later where we'll use more)
+<Cale> So, in order to handle that, we can use the list monad to pick elements...
+<fredmorcos> those cases of 2 or more possible ways to parse the string prefix, correct?
+<Cale> yeah
+<Cale> For example, we'll eventually have a combinator  many :: Parser a -> Parser [a]  for parsing zero or more copies of a parser
+<Cale> analogous to * in regular expressions
+<fredmorcos> yes
+<arkeet> @unmtl StateT String [] a
+<lambdabot> String -> [] (a, String)
+<Cale> arkeet: shhh
+<Cale> :)
+<arkeet> oh
+<Cale> It's okay, it's just I'll get to that ;)
+<Cale> okay
+<Cale> so:
+<Cale> x >>= f = P (\s -> ...) -- similar setup as to before, we use the data constructor P to make a parser, and a lambda to name the input string
+<Cale> x >>= f = P (\s -> do ...) -- we're going to use the list monad to collect results...
+<Cale> x >>= f = P (\s -> do (s',v) <- runParser x s; ...) -- first we run the parser x on the initial input s, getting pairs of depleted input s', and result v
+<Cale> x >>= f = P (\s -> do (s',v) <- runParser x s; (s'',w) <- runParser (f v) s'; ...) -- and then we run the parser (f v) on the depleted input s', getting some further depleted input s'' and result w
+<Cale> x >>= f = P (\s -> do (s',v) <- runParser x s; (s'',w) <- runParser (f v) s'; return (s'',w)) -- which is what we produce as our own result
+<fredmorcos> good so far, the state monad could be useful here, no?
+<Cale> the list monad will take care of doing this in all possible ways
+<Cale> Well, as arkeet hinted at with his lambdabot request, this is exactly the StateT String transformed list monad.
+<arkeet> I like StateT s []
+<arkeet> it's a fun monad.
+<Cale> If we go back to our implementation of return for a moment, recall that it was:
+<Cale> return v = P (\s -> [(s,v)])
+<fredmorcos> OK, i'm not familiar with monad transformers yet
+<Cale> and in the list monad, we have return v = [v]
+<Cale> so we could have written that:
+<fredmorcos> yes
+<arkeet> it's a "nondeterministic State monad"
+<Cale> return v = P (\s -> return (s,v))
+<Cale> using the list monad again
+<Cale> and now there's nothing in this definition of return and (>>=) which is really specific to the list monad
+<fredmorcos> good
+<Cale> or really specific to strings for that matter
+<fredmorcos> yes
+<Cale> So we *could* generalise over both those things, and that'd get us the StateT monad transformer
+<fredmorcos> ok
+<Cale> newtype StateT s m a = StT { runStateT :: s -> m (s,a) }
+<Cale> (I believe mtl puts the s and a in the pair results the other way, but there's a reason I like this way better)
+<Cale> anyway
+<arkeet> @let satisfy p = StateT (\s -> case s of (x:xs) | p x -> return (x,xs); _ -> mzero)
+<lambdabot>  Defined.
+<arkeet> :t satisfy
+<lambdabot> MonadPlus m => (a -> Bool) -> StateT [a] m a
+<Cale> Let's have another look at bind, we can simplify it using a monad law a bit:
+<Cale> x >>= f = P (\s -> do (s',v) <- runParser x s; runParser (f v) s')
+<Cale> because we're after all just returning the results of that latter runParser directly
+<fredmorcos> yes
+<Cale> Now this lets us do things like:
+<Cale> string = mapM char
+<Cale> string :: String -> Parser String
+<arkeet> @let many p = return [] `mplus` liftM2 (:) p (many p)
+<lambdabot>  .L.hs:158:42:
+<lambdabot>      Ambiguous occurrence `many'
+<lambdabot>      It could refer to either...
+<arkeet> oh.
+<arkeet> I'll do this elsewhere.
+<Cale> Okay, so next, let's look at an operation to choose between two parsers
+<Cale> (+++) :: Parser a -> Parser a -> Parser a
+<Cale> The idea being that p +++ q will succeed whenever p or q would
+<Cale> p +++ q = P (\s -> ...)
+<Cale> to do this, we'll run each:
+<Cale> p +++ q = P (\s -> runParser p s ... runParser q s)
+<Cale> and concatenate the lists of results:
+<Cale> p +++ q = P (\s -> runParser p s ++ runParser q s)
+<fredmorcos> so we nondeterministically run p and q?
+<Cale> yeah
+<Cale> laziness will make this not *too* horrible
+<fredmorcos> that's clear
+<Cale> (Though it is the key source of space inefficiency, as we'll hold on to the entirety of the input even if parsing with p alone is sufficient)
+<fredmorcos> yes, that is also clear
+<Cale> Most of the problem of optimising a library like this is coming up with some scheme to implement (+++) more efficiently
+<Cale> okay, so with that, we can write lots of other cool stuff, for instance, that many I mentioned earlier:
+<Cale> many p = (do x <- p; xs <- many p; return (x:xs)) +++ return []
+<Cale> Either we parse one copy of p getting result x, followed by zero or more copies of p getting results xs, and produce the list (x:xs), or we parse zero copies of p, and return an empty list.
+<Cale> The unit element for (+++) is the parser which always fails:
+<fredmorcos> and in that case once many p fails, the parser then stops, and the +++ return [] is just in case the parser fails without having consumed anything?
+<Cale> Well, it will always use both cases in determining the final list of results
+<Cale> So, for example
+<Cale> runParser (many (char 'a')) "aaa"
+<Cale> will give
+<Cale> [("", "aaa"), ("a","aa"), ("aa","a"), ("aaa","")]
+<Cale> with the "greediest" result being first
+<Cale> (because of the order of the arguments to (+++) in the definition of many)
+<Cale> This is important, because we might try something like  do many (char 'a'); char 'a'
+<arkeet> @src many
+<lambdabot> Source not found. It can only be attributed to human error.
+<Cale> (I wrote many above)
+<arkeet> I know.
+<arkeet> I wanted to know the version in Control.Applicative or whatever
+<Cale> (+++) has an identity element, the parser which always fails, giving an empty list of parses:
+<Cale> pzero = P (\s -> [])
+<Cale> or
+<Cale> pzero = satisfy (const False)
+<arkeet> no
+<arkeet> well, ok
+<Cale> (though there's a difference in strictness there)
+<arkeet> ugly
+<Cale> A monad m for which there's a monoid structure for each type m a is a MonadPlus
+<Cale> So we can write:
+<Cale> instance MonadPlus Parser where
+<Cale>   mzero = pzero
+<Cale>   mplus = (+++)
+<fredmorcos> aha... error and choice
+<fredmorcos> *failure
+<Cale> yeah
+<Cale> So, yeah, from here we have a pretty usable, if not-quite-production-ready parser library, and could parse a fairly wide range of languages already
+* mizu_no_oto has quit (Quit: Computer has gone to sleep.)
+<fredmorcos> alright.. thanks a lot Cale!
+* tel (~tel@71.206.43.93) has joined #haskell-overflow
+<Cale> If you want to see a somewhat fancier implementation, you might look at ReadP, which manages to implement (+++) with the same semantics as we have here, but somewhat more efficiently. Or of course, there's Parsec. It gives up on having a symmetric (+++) and biases it heavily to the left, so that if the first parser manages to eat any of its input at all, then the second parser is discarded.
+<Cale> (even if the first parser subsequently fails)
+<fredmorcos> yea, I see what you showed me here is quite similar to ReadP
+<Cale> yeah, we did the same operations, but in a simpler way than ReadP does them

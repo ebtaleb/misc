@@ -1,0 +1,225 @@
+* Now talking on #haskell-overflow
+* Topic for #haskell-overflow is: Overflow conversations and technical discussion from #haskell
+* Topic for #haskell-overflow set by dons at Mon Jan 29 13:07:43 2007
+<Cale> hi
+<jmbto> hi :)
+<Cale> Okay, so the idea is that we're representing computations (of type State s a) which depend on and possibly alter a state of type s, while producing a result of type a.
+* dmj` (~user@205.166.218.80) has joined #haskell-overflow
+<Cale> Since this is a functional programming language, we can conveniently represent such a thing by a function which takes a parameter of type s, and produces both a value of type a, and a new state of type s.
+<Cale> i.e. s -> (s,a)
+<Cale> We'll wrap up this representation in order to get a little bit of abstraction (as well as to be able to define instances of Monad etc.)
+<Cale> newtype State s a = S (s -> (s,a))
+<Cale> Because of this choice of representation, running such a thing on a given initial state is trivial.
+<Cale> runState (S f) s = f s
+<Cale> runState :: State s a -> s -> (s,a)
+<Cale> If our representation had been different, runState might look like an interpreter instead.
+<jmbto> what do you mean? like a REPL?
+<Cale> We might choose State s a to look like abstract syntax for a computation which manipulates some state of type s and produces a result of type a
+<Cale> and then runState would carry out the described computations on an initial state one at a time
+<startling> jmbto, consider something like data Action = Increment | Actions [Action]
+<Cale> If you want to see how to do it the other way, we can go over that later.
+<startling> you're right, this is probably not a useful rabbit-hole at this point.
+<Cale> It's pretty easy to come up with a GADT which has explicit representations of Get and Put and Bind and Return, and then all the work goes into implementing runState :)
+<jmbto> this is the other way?
+<Cale> The way we're choosing to do it is making runState "free" -- we just unpack the function, and apply it to the initial state.
+<Cale> I just wanted to point out that there are some other options in this space, for moving more of the work into runState and out of the things which we'll implement next.
+<Cale> So, everything okay so far? We have:
+<Cale> newtype State s a = S (s -> (s,a))
+<Cale> runState :: State s a -> s -> (s,a)
+<Cale> runState (S f) s = f s
+<Cale> We could also use the record syntax to define runState for us automatically:
+<Cale> newtype State s a = S { runState :: s -> (s,a) }
+<jmbto> crystal clear
+<Cale> okay
+<jmbto> but what did you mean by : <Cale> jmbto: When you get the state, you shouldn't lose anything.
+<Cale> jmbto: You said: <jmbto> I was wondering how you can keep track of the number I want to generate without losing it when getting the state
+<Cale> I'm not sure exactly what you meant, but generally, getting the state doesn't push other stuff out of scope, and it doesn't change anything (as we'll see shortly)
+<jmbto> I considered the number as the state
+* mizu_no_oto has quit (Quit: ["Textual IRC Client: www.textualapp.com"])
+<jmbto> but if I did then I would have lost the FiboTerms result
+<Cale> So, we could start with the Monad instance for State s, or we could start with some primitive computations.
+<Cale> Well, there are a lot of ways to go about that
+<jmbto> I know about the stateful stack example from LYAH
+<jmbto> err...I also did a stateful factorial written in the same style
+<Cale> You could indeed have made the iteration count be the state, and have the pair of fibonacci numbers be a function parameter and result
+<Cale> > let fib (u,v) = do n <- get; if n == 0 then return (u,v) else (do put (n-1); fib (v, u+v)) in runState (fib (0,1)) 10
+<lambdabot>   ((55,89),0)
+<Cale> Might not be the prettiest way to arrange things, but it's certainly possible :)
+<jmbto> meh
+<jmbto> I don't care
+<jmbto> stil learning
+<Cale> yep
+<Cale> okay, so let's make State s into a monad
+<Cale> Firstly, we'll need  return :: a -> m a, and with m = State s, this becomes  return :: a -> State s a
+<Cale> return v will be a State computation which "does nothing" apart from producing v as its result
+<Cale> In this case, "doing nothing" means that it will produce the same final state as it was given as its initial state
+<Cale> So:
+<Cale> return v = ...
+<Cale> we don't have many ways to make values of type State s a yet, apart from the data constructor  S :: (s -> (s,a)) -> State s a
+<Cale> So, we'll use that:
+<Cale> return v = S ...
+<Cale> the parameter to S is a function (s -> (s,a)), so it might as well be a lambda:
+<Cale> return v = S (\s -> ...)
+<jmbto> return v = S (\s -> (s, v)
+<jmbto> )
+<Cale> yep
+<Cale> So, now the next thing is (>>=)
+<Cale> (>>=) :: State s a -> (a -> State s b) -> State s b
+<jmbto> State s is a instance of Monad then
+<Cale> x >>= f will be a State computation which first runs x on the initial state, getting some new state s' and result v, and then will run (f v) using s' as the initial state, getting some final state s'' and result w which will be its own final state and result
+<Cale> So, writing the code in steps:
+<Cale> x >>= f = S ... -- again we don't have many ways to make these things yet, might as well use the data constructor
+<Cale> x >>= f = S (\s -> ...) -- and again that data constructor takes a function, so it might as well be a lambda
+<Cale> x >>= f = S (\s -> let (s',v) = runState x s ...) -- we first run x on the initial state s, and get some new state s' and result v
+<Cale> x >>= f = S (\s -> let (s',v) = runState x s; (s'',w) = runState (f v) s' ...) -- we then run (f v) on the new state s', getting a final state s'', and result w
+* mizu_no_oto (~textual@gw1.mcgraw-hill.com) has joined #haskell-overflow
+<Cale> x >>= f = S (\s -> let (s',v) = runState x s; (s'',w) = runState (f v) s' in (s'',w)) -- finally, we produce that final state and result as our own
+<Cale> Note, we could also simplify this to:
+<Cale> x >>= f = S (\s -> let (s',v) = runState x s in runState (f v) s')
+<jmbto> so before applying f, a computation x is run....what is x?
+<jmbto> it's the function in State?
+<jmbto> the s -> (s, a)?
+<Cale> x is some State computation which is our first parameter
+<Cale> The idea is that we're building a general way to glue smaller state computations into larger ones
+<Cale> We could have started out by defining:
+<Cale> (>>) :: State s a -> State s b -> State s b
+<Cale> Such that x >> y will be a State computation which first runs x, ignoring its result, and then runs y
+<Cale> The idea being that we'll be running y with the final state after running x
+<Cale> However, this wouldn't let us decide what to do next based on the result that x had
+<Cale> and so we generalise y to be a function of x's result
+* mizu_no_oto has quit (Ping timeout: 240 seconds)
+<Cale> and that's how we end up at the type that (>>=) has
+<Cale> (>>=) :: State s a -> (a -> State s b) -> State s b
+<Cale> So, (x >>= f) will first run x on the initial state, getting some result and new state, and then it'll use f on that result to determine what to do next
+<jmbto> but why must x run before applying f to s'?
+<Cale> We apply f to the result of running x
+<jmbto> s' being the new state after running x
+<Cale> and that too: s' is the new state after running x
+<Cale> Applying (f v) to s' is what it means for (f v) to be "after" x
+<Cale> because s' was the final state that x produced
+<Cale> We could instead decide to run (f v) with the initial state s, which was "before" x
+<jmbto> but what if I don't want to run x and just pipe s directly to f via bind?
+<Cale> But then it would be as if x had no effect on the initial state
+<Cale> We can't use f though, if we don't run x
+<Cale> f is a function of a parameter whose type is the result type of x
+<Cale> and running x is the only way to produce a value of that type 'a'
+<Cale> Right?
+<Cale> (>>=) :: State s a -> (a -> State s b) -> State s b
+<Cale> In x >>= f...
+<Cale> x :: State s a
+<Cale> f :: a -> State s b
+<Cale> and
+<Cale> x >>= f :: State s b
+<Cale> So, if we want to use f, we need to get an a from somewhere
+<Cale> and the only place we could get it is by running x
+<jmbto> if I didn't run x, what would his type be?
+<Cale> x :: State s a
+<jmbto> so why does it matter that x must be run since it has this type regardless?
+<Cale> hm?
+<Cale> The idea is that we have some initial state s :: s
+<Cale> and we can runState x s :: (s,a)
+<Cale> So we get some new state s', and result v :: a
+<Cale> and then f v :: State s b
+<Cale> Yes?
+<jmbto> but in x >>= f, no state has been fed to x
+<Cale> That's right.
+<Cale> But the state computation as a whole is a function of the initial state
+<Cale> Right?
+<Cale> When we started defining this...
+<Cale> x >>= f = S (\s -> ...)
+<Cale> We're using the data constructor S, which creates the State computation, and we apply that to a function, which will be a function from the initial state to a final state and result
+<Cale> So in the context of that "...", we have an initial state s
+<Cale> cool?
+<Cale> (I understand that this is mind-bending the first time you see it :)
+<Cale> jmbto: Still here?
+<jmbto> so...in x >>= f there is already an initial state?
+<jmbto> in x
+<jmbto> when x is fed to f
+<Cale> x >>= f is internally a *function* of the initial state
+<Cale> later on, when we runState (x >>= f), we'll supply some initial state as the second parameter to that
+<jmbto> oh ok
+<jmbto> didn't make much sense without the runState
+<jmbto> and I forgot you could glue other State actions together
+<Cale> and we're describing what stuff x >>= f will do with that initial state
+<Cale> Yeah, this (>>=) will be pretty much the only glue we need
+<Cale> all other ways to glue these computations together will be definable in terms of it
+<Cale> So, does the definition:x >>= f = S (\s -> let (s',v) = runState x s; (s'',w) = runState (f v) s' in (s'',w))
+<Cale> make sense?
+<Cale> We can then define x >> y = x >>= (\k -> y)
+<jmbto> with the runState (x >>= f) s yeah
+<Cale> well,
+<Cale> runState (x >>= f) s = let (s',v) = runState x s; (s'',w) = runState (f v) s' in (s'',w)
+<Cale> Is the same thing as writing the actual definition, which is:
+<Cale> x >>= f = S (\s -> let (s',v) = runState x s; (s'',w) = runState (f v) s' in (s'',w))
+<jmbto> yeah but with the former you can see the state is fed
+<jmbto> more explicit
+<Cale> In the latter, you can too, but it's a parameter to the lambda inside the S constructor.
+<Cale> Which I suppose takes some getting used to :)
+<Cale> anyway
+<Cale> Making more sense now? Any questions before we do get and put?
+<jmbto> no that's fine
+<Cale> Okay, so eventually our plan is to define enough things so that we can sort of ignore the fact that S exists.
+<Cale> In order to do that, we want to have some primitive computations which will let us read and write the state
+<Cale> get :: State s s  will be a computation which does nothing to its initial state, and produces it as its result as well
+* augur (~augur@208.58.5.87) has joined #haskell-overflow
+<Cale> put :: s -> State s ()  will be a function which given a new state s, produces a computation that ignores its initial state and has s as its final state, and produces () as its result
+<Cale> get = S (\s -> ...) -- as before, we'll write get as a function of the initial state like this
+<Cale> get = S (\s -> (s,...)) -- it doesn't change the initial state
+<Cale> get = S (\s -> (s,s)) -- and it produces the state as its result
+<Cale> put s' = S (\s -> ...) -- the setup is boring by now :)
+<Cale> put s' = S (\s -> (s',...)) -- we produce s' as the final state
+<Cale> put s' = S (\s -> (s',())) -- and an empty tuple as the result
+<Cale> Make sense what's going on there?
+<jmbto> yes
+<Cale> So, let's use this to write a small program. Consider the type of binary trees:
+<Cale> data Tree a = Tip | Branch a (Tree a) (Tree a)
+<Cale> Let's say we want to write a function  relabel :: Tree a -> Tree Integer, which relabels the tree from left to right with integers from 0 up to the number of Branch nodes in the tree minus 1
+<Cale> So, everything in the left subtree will be less than the root, and everything in the right subtree will be greater.
+<Cale> This function is normally quite awkward to write recursively, because the label for the root can't be determined before we label the left subtree
+<Cale> So, we'd end up passing around an extra parameter for the next label to use, and pairing the results with the next largest available label
+<jmbto> but what if the left subtree is empty?
+<Cale> Well, if it's empty, then we won't use up any labels on it
+<Cale> But the idea is we'd write it via a helper function: relabel' :: Tree a -> Integer -> (Integer, Tree Integer)
+<Cale> But that looks a lot like:  relabel' :: Tree a -> State Integer (Tree Integer)
+<Cale> So, let's do that :)
+<Cale> Firstly, we'll define  fresh :: State Integer Integer  whose job is to get a new unused label:
+<Cale> fresh = do n <- get; put (n+1); return n
+<Cale> It will get the current state, increment the state, and return the old state.
+<Cale> Each time we run fresh, we'll get the next integer that way.
+* dmj` has quit (Remote host closed the connection)
+<Cale> In terms of that, it becomes quite easy to write relabel':
+<Cale> relabel' Tip = return Tip  -- if the tree is empty, there's nothing to relabel, we just return an empty tree
+<jmbto> oh it's just a counter
+<Cale> relabel' (Branch x l r) = do l' <- relabel' l; ... -- in this case, we first relabel the left subtree
+<Cale> relabel' (Branch x l r) = do l' <- relabel' l; n <- fresh; ... -- then we get a new label for the root
+<Cale> relabel' (Branch x l r) = do l' <- relabel' l; n <- fresh; r' <- relabel' r; ...  -- then we relabel the right subtree
+<Cale> relabel' (Branch x l r) = do l' <- relabel' l; n <- fresh; r' <- relabel' r; return (Branch n l' r') -- and return the complete relabelled tree
+<Cale> Oh, I should ask: are you familiar with how do notation desugars into uses of (>>=)?
+<Cale> We could also write this:
+<jmbto> do notation
+<jmbto> err
+<jmbto> yeah with lambdas
+<Cale> relabel' (Branch x l r) = relabel' l >>= \l' -> fresh >>= \n -> relabel' r >>= \r' -> return (Branch n l' r')
+<jmbto> not that familiar actually
+<jmbto> I just know it can also be written this way
+<Cale> Okay
+<Cale> So, recursively, do-notation can be desugared like this:
+<Cale> do { x } = x  -- base case with only one statement
+<Cale> do { x ; <stmts> } = x >> do { <stmts> }  -- where x >> y = x >>= (\k -> y)
+<Cale> do { v <- x ; <stmts> } = x >>= \v -> do { <stmts> }  -- when v is a simple variable, or any other pattern which can't fail to match
+<Cale> do { let { <decls> } ; <stmts> } = let { <decls> } in do { <stmts> }
+<Cale> and finally, just for completeness:
+<Cale> do { p <- x ; <stmts> } = let { ok p = do { <stmts> }; ok _ = fail "some error message" } in x >>= ok -- whenever p is a pattern involving a match against a type with more than one constructor (one which might fail)
+<jmbto> why so comprehensive?
+<Cale> hm?
+<jmbto> why all that desugaring?
+<Cale> Well, those rules tell you how to translate between using >>= and using do-notation
+<Cale> So, it's important in order to understand what's actually going on
+<Cale> When you write a do-expression, you're really writing some chain of applications of >>=
+<Cale> GHC will apply those rules to transform the do-expression into something which doesn't involve do
+<jmbto> oh ok you were just clarifying things
+<jmbto> my bad
+<jmbto> since I said I wasn't familiar
+<jmbto> sorry
+<Cale> right
+<jmbto> about relabel' base case, when relabel' will meet Tip, what will be the value?

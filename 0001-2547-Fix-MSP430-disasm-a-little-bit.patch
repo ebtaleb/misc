@@ -1,0 +1,75 @@
+From faf6d9cdb8fe9ecd989f92a401fc5d5af985e6ea Mon Sep 17 00:00:00 2001
+From: jmbto <kagekyio@gmail.com>
+Date: Tue, 19 May 2015 18:11:54 +0200
+Subject: [PATCH] #2547 : Fix MSP430 disasm a little bit
+
+---
+ libr/asm/arch/msp430/msp430_disas.c | 19 ++++++++++++-------
+ 1 file changed, 12 insertions(+), 7 deletions(-)
+
+diff --git a/libr/asm/arch/msp430/msp430_disas.c b/libr/asm/arch/msp430/msp430_disas.c
+index 25b97c1..669b316 100644
+--- a/libr/asm/arch/msp430/msp430_disas.c
++++ b/libr/asm/arch/msp430/msp430_disas.c
+@@ -95,6 +95,7 @@ static int decode_emulation (ut16 instr, ut16 dst, struct msp430_cmd *cmd)
+ 				get_bw (instr) ? "adc.b" : "adc");
+ 		snprintf (cmd->operands, MSP430_INSTR_MAXLEN - 1, "#0, r%d",
+ 				get_dst (instr));
++		remove_first_operand (cmd);
+ 	} else if (opcode == MSP430_MOV && as == 0 && get_src (instr) == MSP430_R3
+ 			&& get_dst (instr) != MSP430_R3 && get_ad (instr) == 0) {
+ 		snprintf (cmd->instr, MSP430_INSTR_MAXLEN - 1, "%s",
+@@ -170,15 +171,15 @@ static int decode_emulation (ut16 instr, ut16 dst, struct msp430_cmd *cmd)
+ 		snprintf (cmd->instr, MSP430_INSTR_MAXLEN - 1, "%s",
+ 				get_bw (instr) ? "sbc.b" : "sbc");
+ 		remove_second_operand (cmd);
+-	} else if (opcode == MSP430_BIS && as == 1 && get_dst (instr) == MSP430_R3) {
++	} else if (opcode == MSP430_BIS && as == 1 && get_dst (instr) == MSP430_SR) {
+ 		snprintf (cmd->instr, MSP430_INSTR_MAXLEN - 1, "setc");
+ 		cmd->operands[0] = '\0';
+ 	} else if (opcode == MSP430_BIS && as == 2 && get_dst (instr) == MSP430_SR) {
+-		snprintf (cmd->instr, MSP430_INSTR_MAXLEN - 1, "setn");
+-		cmd->operands[0] = '\0';
+-	} else if (opcode == MSP430_BIS && as == 2 && get_dst (instr) == MSP430_SR) {
+ 		snprintf (cmd->instr, MSP430_INSTR_MAXLEN - 1, "setz");
+ 		cmd->operands[0] = '\0';
++    } else if (opcode == MSP430_BIS && as == 4 && get_dst (instr) == MSP430_SR) {
++        snprintf (cmd->instr, MSP430_INSTR_MAXLEN - 1, "setn");
++        cmd->operands[0] = '\0';
+ 	} else if (opcode == MSP430_CMP && as == 0 && get_src (instr) == MSP430_SR) {
+ 		snprintf (cmd->instr, MSP430_INSTR_MAXLEN - 1, "%s",
+ 				get_bw (instr) ? "tst.b" : "tst");
+@@ -203,7 +204,11 @@ static int decode_addressing_mode (ut16 instr, ut16 dst, ut16 op2, struct msp430
+ 	case 0:
+ 		switch (get_src (instr)) {
+ 		case MSP430_R3:
+-			snprintf (cmd->operands, MSP430_INSTR_MAXLEN - 1, "#0");
++            if (dst <= 0) {
++                snprintf (cmd->operands, MSP430_INSTR_MAXLEN - 1, "r%d", get_dst(instr));
++            } else {
++                snprintf (cmd->operands, MSP430_INSTR_MAXLEN - 1, "#0");
++            }
+ 			break;
+ 		default:
+ 			snprintf (cmd->operands, MSP430_INSTR_MAXLEN - 1,
+@@ -219,7 +224,7 @@ static int decode_addressing_mode (ut16 instr, ut16 dst, ut16 op2, struct msp430
+ 				"0x%04x", dst);
+ 			break;
+ 		case MSP430_R3:
+-			snprintf (cmd->operands, MSP430_INSTR_MAXLEN - 1, "%s", "#1");
++			snprintf (cmd->operands, MSP430_INSTR_MAXLEN - 1, "r%d", get_dst(instr));
+ 			ret = 2;
+ 			break;
+ 		case MSP430_SR:
+@@ -262,7 +267,7 @@ static int decode_addressing_mode (ut16 instr, ut16 dst, ut16 op2, struct msp430
+ 			break;
+ 		default:
+ 			snprintf (cmd->operands, MSP430_INSTR_MAXLEN - 1,
+-					"@r%d+", get_src (instr));
++					"r%d", get_dst (instr));
+ 		}
+ 		break;
+ 	default:
+-- 
+2.1.4
+
